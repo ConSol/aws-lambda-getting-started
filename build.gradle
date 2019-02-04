@@ -1,0 +1,74 @@
+plugins {
+    id 'java'
+}
+
+group 'de.consol'
+version '1.0-SNAPSHOT'
+
+sourceCompatibility = 1.8
+
+ext {
+    awsSdkVersion = '1.11.486'
+    awsLambdaVersion = '1.2.0'
+    awsLambdaEventsVersion = '2.2.5'
+    junitVersion = '4.12'
+    jpaVersion = '2.2'
+    hibernateVersion = '5.4.1.Final'
+    mysqlConnectorVersion = '8.0.14'
+
+    libraries =  [
+            awsSdkRds: "com.amazonaws:aws-java-sdk-rds:$awsSdkVersion",
+            awsLambda: "com.amazonaws:aws-lambda-java-core:$awsLambdaVersion",
+            awsLambdaEvents: "com.amazonaws:aws-lambda-java-events:$awsLambdaEventsVersion",
+            jpa: "javax.persistence:javax.persistence-api:$jpaVersion",
+            hibernateCore: "org.hibernate:hibernate-core:$hibernateVersion",
+            mysqlConnector: "mysql:mysql-connector-java:$mysqlConnectorVersion"
+    ]
+}
+
+subprojects {
+    group 'de.consol'
+    version '1.0-SNAPSHOT'
+
+    apply plugin: 'java'
+
+    compileJava {
+        sourceCompatibility = 1.8
+        targetCompatibility = 1.8
+    }
+
+    repositories {
+        mavenCentral()
+    }
+
+    dependencies {
+        testCompile group: 'junit', name: 'junit', version: "$junitVersion"
+    }
+
+    task buildZip(type: Zip) {
+        from compileJava
+        from processResources
+        into('lib') {
+            from configurations.compileClasspath
+        }
+    }
+
+    task copyZip(type: Copy) {
+        from('build/distributions') {
+            include '*.zip'
+        }
+        into parent.buildDir.getPath() + '/distributions'
+    }
+
+    buildZip.finalizedBy(copyZip)
+    build.finalizedBy(buildZip)
+
+    javadoc {
+        options.memberLevel = JavadocMemberLevel.PRIVATE
+        options.with{
+            linksOffline "https://docs.oracle.com/javase/8/docs/api/", "https://docs.oracle.com/javase/8/docs/api/"
+            linksOffline "https://docs.oracle.com/javaee/7/api/", "https://docs.oracle.com/javaee/7/api/"
+            linksOffline "https://docs.jboss.org/hibernate/orm/5.4/javadocs/", "https://docs.jboss.org/hibernate/orm/5.4/javadocs/"
+        }
+    }
+}

@@ -1,0 +1,7 @@
+dependencies {
+    compile libraries.awsSdkRds
+    compile libraries.awsLambda
+    compile libraries.jpa
+    compile libraries.hibernateCore
+    compile libraries.mysqlConnector
+}

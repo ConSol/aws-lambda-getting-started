@@ -1,0 +1,800 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  AWS Cloud formation template to deploy a simple REST Backend with database
+  access.
+Parameters:
+  OwnerFirstName:
+    Type: String
+    Description: The first name of the owner.
+  OwnerLastName:
+    Type: String
+    Description: The last name of the owner.
+  SourceCodeBucketName:
+    Type: String
+    Description: The name of the S3 bucket holding the sources (as *.zip).
+  VpcCidr:
+    Type: String
+    AllowedPattern: '((\d{1,3})\.){3}\d{1,3}/\d{1,2}'
+    Description: the CIDR block for the created VPC.
+    Default: 10.27.13.0/24
+    ConstraintDescription: Must be al valid CIDR (a.b.c.d./e).
+  Subnet1Cidr:
+    Type: String
+    AllowedPattern: '((\d{1,3})\.){3}\d{1,3}/\d{1,2}'
+    Default: 10.27.13.0/28
+    Description: The CIDR blockf or the first subnet.
+    ConstraintDescription: >-
+      Must be a valid CIDR (a.b.c.d./e) and a subnet of VpcCidr.
+  Subnet2Cidr:
+    Type: String
+    AllowedPattern: '((\d{1,3})\.){3}\d{1,3}/\d{1,2}'
+    Default: 10.27.13.16/28
+    Description: The CIDR blockf or the first subnet.
+    ConstraintDescription: >-
+      Must be a valid CIDR (a.b.c.d./e) and a subnet of VpcCidr.
+  RdsUsername:
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: >-
+      must begin with a letter and contain only alphanumeric characters. Must
+      not be longer than 16 characters.
+    Description: >-
+      The username for database access. Must not be longer than 16 characters.
+    MaxLength: '16'
+    MinLength: '1'
+    Type: String
+  RdsPassword:
+    AllowedPattern: '[a-zA-Z0-9]*'
+    ConstraintDescription: >-
+      Must contain only alphanumeric characters, must be between 8 and 41 characters long.
+    Description: MySQL root password, must be between 8 and 41 characters long.
+    MaxLength: '41'
+    MinLength: '8'
+    NoEcho: 'true'
+    Type: String
+
+Resources:
+  DBInstance:
+    Type: AWS::RDS::DBInstance
+    DependsOn:
+      - VPCGatewayAttachment
+      - DBSecurityGroup
+      - DBSubnetGroup
+    Properties:
+      AllocatedStorage: 20
+      AllowMajorVersionUpgrade: false
+      AutoMinorVersionUpgrade: true
+      DBInstanceClass: db.t2.micro
+      DBName: !Sub "ByTemplateCreatedRDS${OwnerFirstName}${OwnerLastName}"
+      DBInstanceIdentifier: !Sub "ByTemplateCreatedRDSHost${OwnerFirstName}${OwnerLastName}"
+      DBSubnetGroupName:
+        Ref: DBSubnetGroup
+      Engine: mysql
+      LicenseModel: general-public-license
+      MasterUsername:
+        Ref: RdsUsername
+      MasterUserPassword:
+        Ref: RdsPassword
+      MultiAZ: false
+      Port: 3306
+      PubliclyAccessible: true
+      StorageEncrypted: false
+      StorageType: gp2
+      VPCSecurityGroups:
+        - Ref: DBSecurityGroup
+      Tags:
+        - Key: Owner
+          Value: !Sub "${OwnerFirstName}.${OwnerLastName}"
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    DependsOn:
+      - SubnetAZ1
+      - SubnetAZ2
+    Properties:
+      DBSubnetGroupName: !Sub 'DBSubnet${OwnerFirstName}${OwnerLastName}'
+      DBSubnetGroupDescription: Subnet group for the database.
+      SubnetIds:
+        - Ref: SubnetAZ1
+        - Ref: SubnetAZ2
+      Tags:
+        - Key: Name
+          Value: !Sub 'ByTemplateCreatedDBSubnetGroup${OwnerFirstName}${OwnerLastName}'
+        - Key: Owner
+          Value: !Sub "${OwnerFirstName}.${OwnerLastName}"
+
+  CreateNewUser:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - DBInstance
+      - LambdaSecurityGroup
+      - LambdaExecutionRole
+      - SubnetAZ1
+      - SubnetAZ2
+    Properties:
+      FunctionName: !Sub "ByTemplateCreatedLambdaCreateNewUser${OwnerFirstName}${OwnerLastName}"
+      Handler: de.consol.dus.aws.lambda.CreateNewUser::handleRequest
+      Runtime: java8
+      Description: Lambda function to get all user from database.
+      Timeout: 15
+      MemorySize: 512
+      Code:
+        S3Bucket:
+          Ref: SourceCodeBucketName
+        S3Key: create-new-user-1.0-SNAPSHOT.zip
+      Role: !GetAtt LambdaExecutionRole.Arn
+      VpcConfig:
+        SecurityGroupIds:
+          - Ref: LambdaSecurityGroup
+        SubnetIds:
+          - Ref: SubnetAZ1
+          - Ref: SubnetAZ2
+      Environment:
+        Variables:
+          RDS_ENDPOINT: !GetAtt DBInstance.Endpoint.Address
+          RDS_DB_NAME: users
+          RDS_USERNAME:
+            Ref: RdsUsername
+          RDS_PASSWORD:
+            Ref: RdsPassword
+      Tags:
+        - Key: Owner
+          Value: !Sub "${OwnerFirstName}.${OwnerLastName}"
+
+  DeleteUserById:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - DBInstance
+      - LambdaSecurityGroup
+      - LambdaExecutionRole
+      - SubnetAZ1
+      - SubnetAZ2
+    Properties:
+      FunctionName: !Sub "ByTemplateCreatedLambdaDeleteUserById${OwnerFirstName}${OwnerLastName}"
+      Handler: de.consol.dus.aws.lambda.DeleteUserById::handleRequest
+      Runtime: java8
+      Description: >-
+        Lambda function to delete user specified by id from the database.
+      Timeout: 15
+      MemorySize: 512
+      Code:
+        S3Bucket:
+          Ref: SourceCodeBucketName
+        S3Key: delete-user-by-id-1.0-SNAPSHOT.zip
+      Role: !GetAtt LambdaExecutionRole.Arn
+      VpcConfig:
+        SecurityGroupIds:
+          - Ref: LambdaSecurityGroup
+        SubnetIds:
+          - Ref: SubnetAZ1
+          - Ref: SubnetAZ2
+      Environment:
+        Variables:
+          RDS_ENDPOINT: !GetAtt DBInstance.Endpoint.Address
+          RDS_DB_NAME: users
+          RDS_USERNAME:
+            Ref: RdsUsername
+          RDS_PASSWORD:
+            Ref: RdsPassword
+      Tags:
+        - Key: Owner
+          Value: !Sub "${OwnerFirstName}.${OwnerLastName}"
+
+  GetUserById:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - DBInstance
+      - LambdaSecurityGroup
+      - LambdaExecutionRole
+      - SubnetAZ1
+      - SubnetAZ2
+    Properties:
+      FunctionName: !Sub "ByTemplateCreatedLambdaGetUserById${OwnerFirstName}${OwnerLastName}"
+      Handler: de.consol.dus.aws.lambda.GetUserById::handleRequest
+      Runtime: java8
+      Description: >-
+        Lambda function to get a user by the specified id from database.
+      Timeout: 15
+      MemorySize: 512
+      Code:
+        S3Bucket:
+          Ref: SourceCodeBucketName
+        S3Key: get-user-by-id-1.0-SNAPSHOT.zip
+      Role: !GetAtt LambdaExecutionRole.Arn
+      VpcConfig:
+        SecurityGroupIds:
+          - Ref: LambdaSecurityGroup
+        SubnetIds:
+          - Ref: SubnetAZ1
+          - Ref: SubnetAZ2
+      Environment:
+        Variables:
+          RDS_ENDPOINT: !GetAtt DBInstance.Endpoint.Address
+          RDS_DB_NAME: users
+          RDS_USERNAME:
+            Ref: RdsUsername
+          RDS_PASSWORD:
+            Ref: RdsPassword
+      Tags:
+        - Key: Owner
+          Value: !Sub "${OwnerFirstName}.${OwnerLastName}"
+
+  GetAllUsers:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - DBInstance
+      - LambdaSecurityGroup
+      - LambdaExecutionRole
+      - SubnetAZ1
+      - SubnetAZ2
+    Properties:
+      FunctionName: !Sub "ByTemplateCreatedLambdaGetAllUsers${OwnerFirstName}${OwnerLastName}"
+      Handler: de.consol.dus.aws.lambda.GetAllUsers::handleRequest
+      Runtime: java8
+      Description: >-
+        Lambda function to get all user from database.
+      Timeout: 15
+      MemorySize: 512
+      Code:
+        S3Bucket:
+          Ref: SourceCodeBucketName
+        S3Key: get-all-users-1.0-SNAPSHOT.zip
+      Role: !GetAtt LambdaExecutionRole.Arn
+      VpcConfig:
+        SecurityGroupIds:
+          - Ref: LambdaSecurityGroup
+        SubnetIds:
+          - Ref: SubnetAZ1
+          - Ref: SubnetAZ2
+      Environment:
+        Variables:
+          RDS_ENDPOINT: !GetAtt DBInstance.Endpoint.Address
+          RDS_DB_NAME: users
+          RDS_USERNAME:
+            Ref: RdsUsername
+          RDS_PASSWORD:
+            Ref: RdsPassword
+      Tags:
+        - Key: Owner
+          Value: !Sub "${OwnerFirstName}.${OwnerLastName}"
+
+  UpdateUserById:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - DBInstance
+      - LambdaSecurityGroup
+      - LambdaExecutionRole
+      - SubnetAZ1
+      - SubnetAZ2
+    Properties:
+      FunctionName: !Sub "ByTemplateCreatedLambdaUpdateUserById${OwnerFirstName}${OwnerLastName}"
+      Handler: de.consol.dus.aws.lambda.UpdateUserById::handleRequest
+      Runtime: java8
+      Description: >-
+        Lambda function to update the specified user with new name and/or email.
+      Timeout: 15
+      MemorySize: 512
+      Code:
+        S3Bucket:
+          Ref: SourceCodeBucketName
+        S3Key: update-user-by-id-1.0-SNAPSHOT.zip
+      Role: !GetAtt LambdaExecutionRole.Arn
+      VpcConfig:
+        SecurityGroupIds:
+          - Ref: LambdaSecurityGroup
+        SubnetIds:
+          - Ref: SubnetAZ1
+          - Ref: SubnetAZ2
+      Environment:
+        Variables:
+          RDS_ENDPOINT: !GetAtt DBInstance.Endpoint.Address
+          RDS_DB_NAME: users
+          RDS_USERNAME:
+            Ref: RdsUsername
+          RDS_PASSWORD:
+            Ref: RdsPassword
+      Tags:
+        - Key: Owner
+          Value: !Sub "${OwnerFirstName}.${OwnerLastName}"
+
+  PermissionApiGatewayInvokeGetAllUsers:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - RestApi
+      - GetAllUsers
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt GetAllUsers.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Join
+        - ":"
+        - - "arn:aws:execute-api"
+          - !Sub "${AWS::Region}"
+          - !Sub "${AWS::AccountId}"
+          - !Sub "${RestApi}/*/*/*"
+
+  PermissionApiGatewayInvokeCreateNewUser:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - RestApi
+      - CreateNewUser
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt CreateNewUser.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Join
+        - ":"
+        - - "arn:aws:execute-api"
+          - !Sub "${AWS::Region}"
+          - !Sub "${AWS::AccountId}"
+          - !Sub "${RestApi}/*/*/*"
+
+  PermissionApiGatewayInvokeGetUserById:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - RestApi
+      - GetUserById
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt GetUserById.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Join
+        - ":"
+        - - "arn:aws:execute-api"
+          - !Sub "${AWS::Region}"
+          - !Sub "${AWS::AccountId}"
+          - !Sub "${RestApi}/*/*/*"
+
+  PermissionApiGatewayInvokeDeleteUserById:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - RestApi
+      - DeleteUserById
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt DeleteUserById.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Join
+        - ":"
+        - - "arn:aws:execute-api"
+          - !Sub "${AWS::Region}"
+          - !Sub "${AWS::AccountId}"
+          - !Sub "${RestApi}/*/*/*"
+
+  PermissionApiGatewayInvokeUpdateUserById:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - RestApi
+      - UpdateUserById
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt UpdateUserById.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Join
+        - ":"
+        - - "arn:aws:execute-api"
+          - !Sub "${AWS::Region}"
+          - !Sub "${AWS::AccountId}"
+          - !Sub "${RestApi}/*/*/*"
+
+  RestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Description: The REST API to create/find/update/delete users.
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Name: !Sub "UsersEndpoint${OwnerFirstName}${OwnerLastName}"
+
+  UsersEndpoint:
+    Type: AWS::ApiGateway::Resource
+    DependsOn:
+      - RestApi
+    Properties:
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: users
+      RestApiId:
+        Ref: RestApi
+
+  UserIdEndpoint:
+    Type: AWS::ApiGateway::Resource
+    DependsOn:
+      - RestApi
+      - UsersEndpoint
+    Properties:
+      ParentId:
+        Ref: UsersEndpoint
+      PathPart: "{id}"
+      RestApiId:
+        Ref: RestApi
+
+  GetAllUsersApiMethod:
+    Type: AWS::ApiGateway::Method
+    DependsOn:
+      - RestApi
+      - UsersEndpoint
+      - GetAllUsers
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: GET
+      OperationName: ListUsers
+      ResourceId:
+        Ref: UsersEndpoint
+      RestApiId:
+        Ref: RestApi
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        IntegrationResponses:
+          - StatusCode: 200
+        Uri: !Join
+          - ""
+          - - !Sub "arn:aws:apigateway:${AWS::Region}:"
+            - "lambda:path/2015-03-31/functions/"
+            - !GetAtt GetAllUsers.Arn
+            - "/invocations"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels:
+            application/json: Empty
+
+  CreateNewUserApiMethod:
+    Type: AWS::ApiGateway::Method
+    DependsOn:
+      - RestApi
+      - UsersEndpoint
+      - CreateNewUser
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: POST
+      OperationName: CreateNewUser
+      ResourceId:
+        Ref: UsersEndpoint
+      RestApiId:
+        Ref: RestApi
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        IntegrationResponses:
+          - StatusCode: 200
+        Uri: !Join
+          - ""
+          - - !Sub "arn:aws:apigateway:${AWS::Region}:"
+            - "lambda:path/2015-03-31/functions/"
+            - !GetAtt CreateNewUser.Arn
+            - "/invocations"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels:
+            application/json: Empty
+
+  GetUserByIdApiMethod:
+    Type: AWS::ApiGateway::Method
+    DependsOn:
+      - RestApi
+      - UserIdEndpoint
+      - GetUserById
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: GET
+      OperationName: GetUserById
+      ResourceId:
+        Ref: UserIdEndpoint
+      RestApiId:
+        Ref: RestApi
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        IntegrationResponses:
+          - StatusCode: 200
+        RequestTemplates:
+          application/json: "$input.params('id')"
+        Uri: !Join
+          - ""
+          - - !Sub "arn:aws:apigateway:${AWS::Region}:"
+            - "lambda:path/2015-03-31/functions/"
+            - !GetAtt GetUserById.Arn
+            - "/invocations"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels:
+            application/json: Empty
+
+  DeleteUserByIdApiMethod:
+    Type: AWS::ApiGateway::Method
+    DependsOn:
+      - RestApi
+      - UserIdEndpoint
+      - DeleteUserById
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: DELETE
+      OperationName: DeleteUserById
+      ResourceId:
+        Ref: UserIdEndpoint
+      RestApiId:
+        Ref: RestApi
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        IntegrationResponses:
+          - StatusCode: 200
+        RequestTemplates:
+          application/json: "$input.params('id')"
+        Uri: !Join
+          - ""
+          - - !Sub "arn:aws:apigateway:${AWS::Region}:"
+            - "lambda:path/2015-03-31/functions/"
+            - !GetAtt DeleteUserById.Arn
+            - "/invocations"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels:
+            application/json: Empty
+
+  UpdateUserByIdApiMethod:
+    Type: AWS::ApiGateway::Method
+    DependsOn:
+      - RestApi
+      - UserIdEndpoint
+      - UpdateUserById
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: PATCH
+      OperationName: UpdateUserById
+      ResourceId:
+        Ref: UserIdEndpoint
+      RestApiId:
+        Ref: RestApi
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        IntegrationResponses:
+          - StatusCode: 200
+        RequestTemplates:
+          application/json: >-
+            #set($name = $input.path('$.name'))
+
+            #set($email = $input.path('$.email'))
+
+            {
+                "id": $input.params('id')
+                #if ($name != "")
+                    , "name": "$name"
+                #end
+
+                #if ($email != ""),
+                    "email": "$email"
+                #end
+            }
+        Uri: !Join
+          - ""
+          - - !Sub "arn:aws:apigateway:${AWS::Region}:"
+            - "lambda:path/2015-03-31/functions/"
+            - !GetAtt UpdateUserById.Arn
+            - "/invocations"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels:
+            application/json: Empty
+
+  RestApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - RestApi
+      - GetAllUsersApiMethod
+      - CreateNewUserApiMethod
+      - GetUserByIdApiMethod
+      - DeleteUserByIdApiMethod
+      - UpdateUserByIdApiMethod
+    Properties:
+      Description: Deployment of the REST API.
+      RestApiId:
+        Ref: RestApi
+      StageName: Test
+      StageDescription:
+        Description: Test Deployment.
+        Tags:
+          - Key: Owner
+            Value: !Sub "${OwnerFirstName}.${OwnerLastName}"
+
+  IGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "ByTemplateCreatedIGW${OwnerFirstName}${OwnerLastName}"
+        - Key: Owner
+          Value: !Sub "${OwnerFirstName}.${OwnerLastName}"
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock:
+        Ref: VpcCidr
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "ByTemplateCreatedVPC${OwnerFirstName}${OwnerLastName}"
+        - Key: Owner
+          Value: !Sub "${OwnerFirstName}.${OwnerLastName}"
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    DependsOn:
+      - IGW
+      - VPC
+    Properties:
+      InternetGatewayId:
+        Ref: IGW
+      VpcId:
+        Ref: VPC
+
+  InternetRouteTable:
+    Type: AWS::EC2::RouteTable
+    DependsOn: VPC
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "ByTemplateCreatedRouteTable${OwnerFirstName}${OwnerLastName}"
+        - Key: Owner
+          Value: !Sub "${OwnerFirstName}.${OwnerLastName}"
+
+  InternetRoute:
+    Type: AWS::EC2::Route
+    DependsOn:
+      - IGW
+      - InternetRouteTable
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: IGW
+      RouteTableId:
+        Ref: InternetRouteTable
+
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: VPC
+    Properties:
+      GroupName: !Sub "ByTemplateCreatedSecurityGroupDBAccess${OwnerFirstName}${OwnerLastName}"
+      GroupDescription: >-
+        Allows access to the database from the consol ip addresses, as well as
+        from the same VPC.
+      VpcId:
+        Ref: VPC
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: TCP
+          FromPort: 3306
+          ToPort: 3306
+      Tags:
+        - Key: Name
+          Value: !Sub "ByTemplateCreatedSecurityGroupDBAccess${OwnerFirstName}${OwnerLastName}"
+        - Key: Owner
+          Value: !Sub "${OwnerFirstName}.${OwnerLastName}"
+
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: VPC
+    Properties:
+      GroupName: !Sub "ByTemplateCreatedSecurityGroupLambdas${OwnerFirstName}${OwnerLastName}"
+      GroupDescription: >-
+        Security group in which the lambdas are executed. Only allow egress
+        traffic to database.
+      VpcId:
+        Ref: VPC
+      SecurityGroupEgress:
+        - CidrIp:
+            Ref: VpcCidr
+          IpProtocol: TCP
+          FromPort: 3306
+          ToPort: 3306
+      Tags:
+        - Key: Name
+          Value: !Sub "ByTemplateCreatedSecurityGroupLambdas${OwnerFirstName}${OwnerLastName}"
+        - Key: Owner
+          Value: !Sub "${OwnerFirstName}.${OwnerLastName}"
+
+  SubnetAZ1:
+    Type: AWS::EC2::Subnet
+    DependsOn:
+      - VPC
+    Properties:
+      AvailabilityZone: !Select [ 0, !GetAZs '']
+      CidrBlock:
+        Ref: Subnet1Cidr
+      VpcId:
+        Ref: VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "ByTemplateCreatedSubnet1${OwnerFirstName}${OwnerLastName}"
+        - Key: Owner
+          Value: !Sub "${OwnerFirstName}.${OwnerLastName}"
+
+  SubnetAZ2:
+    Type: AWS::EC2::Subnet
+    DependsOn:
+      - VPC
+    Properties:
+      AvailabilityZone: !Select [ 1, !GetAZs '']
+      CidrBlock:
+        Ref: Subnet2Cidr
+      VpcId:
+        Ref: VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "ByTemplateCreatedSubnet2${OwnerFirstName}${OwnerLastName}"
+        - Key: Owner
+          Value: !Sub "${OwnerFirstName}.${OwnerLastName}"
+
+  SubnetAZ1ToInternetRoutTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    DependsOn:
+      - SubnetAZ1
+      - InternetRouteTable
+    Properties:
+      SubnetId:
+        Ref: SubnetAZ1
+      RouteTableId:
+        Ref: InternetRouteTable
+
+  SubnetAZ2ToInternetRoutTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    DependsOn:
+      - SubnetAZ2
+      - InternetRouteTable
+    Properties:
+      SubnetId:
+        Ref: SubnetAZ2
+      RouteTableId:
+        Ref: InternetRouteTable
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: !Sub "root${OwnerFirstName}${OwnerLastName}"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+                Resource: "*"
+      MaxSessionDuration: 3600
+      RoleName: !Sub "ByTemplateCreatedLambdaExecutionRole${OwnerFirstName}${OwnerLastName}"
+Outputs:
+  DatabaseUri:
+    Description: URI for the database.
+    Value: !GetAtt DBInstance.Endpoint.Address
+  GatewayUri:
+    Description: >-
+      URI of the gateway, can be used to make REST-calls to the backend.
+    Value: !Join
+      - ''
+      - - "https://"
+        - Ref: RestApi
+        - ".execute-api."
+        - Ref: AWS::Region
+        - ".amazonaws.com/Test"

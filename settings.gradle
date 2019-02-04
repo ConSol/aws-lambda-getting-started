@@ -1,0 +1,10 @@
+rootProject.name = 'aws-lambda'
+
+include 'create-new-user'
+include 'delete-user-by-id'
+include 'get-all-users'
+include 'get-user-by-id'
+include 'update-user-by-id'
+
+
+
